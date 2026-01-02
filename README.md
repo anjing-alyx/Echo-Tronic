@@ -1,4 +1,5 @@
-Welcome to the Echo-Tronic wiki! As this is a personal documentation for my reference, I shall keep the language layman and casual.
+README [WIP]
+Translating human facial motion into physical animatronic movement in real time using Mediapipe API, Arduino and PCA9865. 
 
 1. [What is Echo-Tronic](#What-is-Echo-Tronic)
 
