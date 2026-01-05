@@ -24,8 +24,8 @@ lx_min, lx_max = 72, 108 ## Left Eye X-Direction - Servo 1 (-R), (+)L
 ry_min, ry_max = 76.5, 103.5 ## Right Eye Y-Direction - Servo 2 (-)D, (+)U
 ly_min, ly_max = 76.5, 103.5 ## Left Eye Y-Direction - Servo 3 (-)U, (+)D
 
-rb_min, rb_max = 10, 90 ## Right Eye Blink - Servo 4 (-)U
-lb_min, lb_max = 90, 170 ## Left Eye Blink - Servo 5 (+)U
+rb_min, rb_max = 20, 90 ## Right Eye Blink - Servo 4 (-)U
+lb_min, lb_max = 90, 140 ## Left Eye Blink - Servo 5 (+)U
 
 reb_min, reb_max = 75, 105 ## Right Eyebrow - Servo 6 (-)D, (+)U  - Index 295 track relative to midpoint of eye_width
 leb_min, leb_max = 75, 105 ## Left Eyebrow - Servo 7 - (-)U, (+)D - Index 55
@@ -100,11 +100,12 @@ eye_max = {"L": 0.0, "R": 0.0}  # store per eye
 
 def theta14(p1,p2,sf):
     mm_convert=sf*eu_dist(p1,p2)
-    eye_ratio = (mm_convert/(0.6*horizontal_eye))*90*2
-    if eye_ratio < 25:
+    eye_ratio = (mm_convert/(0.6*horizontal_eye))*90
+    print(eye_ratio)
+    if eye_ratio < 30:
         return 90
-    elif eye_ratio >= 60:
-        return 160
+    elif eye_ratio >= 100:
+        return 170
     else:
         return myround(eye_ratio)+90
 
@@ -124,10 +125,9 @@ def mouth(m1, m2, sf):
 def eyebrow(brow, eye, sf, mi, ma):
     edist = eu_dist(eye,brow)
     eangle = (myround(edist*sf,base = 5)/(1.2*horizontal_eye))*abs(ma-mi)+mi-16
-    print(eangle)
-    if eangle < 95 and eangle > 85:
+    if eangle < 90 and eangle > 85:
         return 90
-    if eangle > 92:
+    if eangle > 90:
         return ma
     else:
         return myround(eangle, base =5)
@@ -206,120 +206,159 @@ def process_eye_tracking(coords, prev_angles, eye="left"):
     return smoothed_x, smoothed_y
 
 # ---------------------------
-# Filters for jitter-sensitive signals
-# ---------------------------
-
-FPS_EST = 30  # conservative estimate
-
-# ---------------------------
 # Live Stream
 # ---------------------------
+def open_video_source(source_type="webcam", video_path=None):
+    if source_type == "webcam":
+        cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+    elif source_type == "video" and video_path:
+        cap = cv2.VideoCapture(video_path, cv2.CAP_FFMPEG)
+    else:
+        raise ValueError("Invalid video source")
 
-def start_stream():
+    if not cap.isOpened():
+        raise RuntimeError("Could not open video source")
+
+    return cap
+
+stream_running = False
+
+def start_stream(source_type="webcam", video_path=None):
+    global stream_running
+
+    if stream_running:
+        print("Stream already running")
+        return
+
+    stream_running = True
+
     def run():
-        cap = cv2.VideoCapture(0)
-        prev_angles = [90, 90]  # initial center
+        global stream_running
+        cap = None
 
-        with mp_face_mesh.FaceMesh(
-            max_num_faces=1,
-            refine_landmarks=True,
-            min_detection_confidence=0.7,
-            min_tracking_confidence=0.7
-        ) as face_mesh:
-            
-            
-            while cap.isOpened():
-                ret, frame = cap.read()
-                if not ret: break
+        try:
+            cap = open_video_source(source_type, video_path)
+            prev_angles = [90, 90]
 
-                coords = get_landmarks(frame, face_mesh)
-                if len(coords) < len(selected_indices):
-                    cv2.imshow("Tracking", frame)
-                    if cv2.waitKey(1) & 0xFF == 27: break
-                    continue
-                
-                #Calculation Variables#
-                sf = scale_factor(coords)
-                
-                # Eye tracking
-                LeyeX, LeyeY = process_eye_tracking(coords, prev_angles, "left")
-                ReyeX, ReyeY = process_eye_tracking(coords, prev_angles, "right")
-                prev_angles = [LeyeX, LeyeY]
-                
-                # Blink
-                Lblink_raw = theta14(coords[386], coords[374],sf)
-                Rblink_raw = theta14(coords[159], coords[145],sf)
-                
-                # Mouth
-                M1_raw = mouth(coords[13], coords[14], sf)
-                
-                # Eyebrows
-                Rebrow_raw = eyebrow(coords[282], coords[362], sf, reb_min,reb_max)
-                Lebrow_raw = eyebrow(coords[52], coords[133], sf, leb_min, reb_max)
-                
-                # Nose
-                Nose_raw = nose(coords[393], coords[269], sf)
-                
-                # Servo mapping (invert + clip)
-                ReyeX_s = int(np.clip(ReyeX, rx_min, rx_max))
-                LeyeX_s = int(np.clip(LeyeX, lx_min, lx_max))
-                ReyeY_s = int(np.clip(180-ReyeY, ry_min, ry_max))
-                LeyeY_s = int(np.clip(LeyeY, ly_min, ly_max))
-                Rblink_s = int(np.clip(180-Rblink_raw, rb_min, rb_max))
-                Lblink_s = int(np.clip(Lblink_raw, lb_min, lb_max))
-                Rebrow_s = int(np.clip(Rebrow_raw,reb_min,reb_max))
-                Lebrow_s = int(np.clip(180- Lebrow_raw,leb_min,leb_max)) ## Already Inverted in the code
-                M1_s = int(np.clip(M1_raw, m1_min, m1_max))
-                M2_s = int(np.clip(180-M1_raw, m2_min, m2_max))
-                Nose_s = int(np.clip(Nose_raw, nose_min, nose_max))
+            with mp_face_mesh.FaceMesh(
+                max_num_faces=1,
+                refine_landmarks=True,
+                min_detection_confidence=0.7,
+                min_tracking_confidence=0.7
+            ) as face_mesh:
 
-                # Packet
-                packet = ([
-                    ReyeX_s,
-                    LeyeX_s,
-                    ReyeY_s,
-                    LeyeY_s,
-                    Rblink_s,
-                    Lblink_s,
-                    Rebrow_s,
-                    Lebrow_s,
-                    M1_s,
-                    M2_s,
-                    Nose_s
-                    ])
+                while cap.isOpened():
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
 
-                print(packet)
-                pack_send(packet)
-                
-                
-                # Draw overlay
-                for pt in coords.values():
-                    cv2.circle(frame, pt, 2, (0,255,0), -1)
-                cv2.line(frame, coords[386], coords[374], (255,0,0),2)
-                cv2.line(frame, coords[145], coords[159], (255,0,0),2)
-                cv2.line(frame, coords[13], coords[14], (0,0,255),2)
-                cv2.putText(frame, f"LX:{LeyeX:.0f} LY:{LeyeY:.0f}", (30,30),
-                            cv2.FONT_HERSHEY_SIMPLEX, 1,(0,255,0),2)
+                    coords = get_landmarks(frame, face_mesh)
+                    if len(coords) < len(selected_indices):
+                        cv2.imshow("Eye Tracking", frame)
+                        if cv2.waitKey(1) & 0xFF == 27:
+                            break
+                        continue
 
-                cv2.imshow("Eye Tracking", frame)
-                if cv2.waitKey(1) & 0xFF == 27: break
+                    # ---- Calculations ----
+                    sf = scale_factor(coords)
 
-        cap.release()
-        cv2.destroyAllWindows()
+                    LeyeX, LeyeY = process_eye_tracking(coords, prev_angles, "left")
+                    ReyeX, ReyeY = process_eye_tracking(coords, prev_angles, "right")
+                    prev_angles = [LeyeX, LeyeY]
+
+                    Lblink_raw = theta14(coords[374], coords[386], sf)
+                    Rblink_raw = theta14(coords[159], coords[145], sf)
+
+                    M1_raw = mouth(coords[13], coords[14], sf)
+
+                    Rebrow_raw = eyebrow(coords[282], coords[362], sf, reb_min, reb_max)
+                    Lebrow_raw = eyebrow(coords[52], coords[133], sf, leb_min, leb_max)
+
+                    Nose_raw = nose(coords[393], coords[269], sf)
+
+                    # ---- Servo mapping ----
+                    packet = [
+                        int(np.clip(ReyeX, rx_min, rx_max)),
+                        int(np.clip(LeyeX, lx_min, lx_max)),
+                        int(np.clip(180 - ReyeY, ry_min, ry_max)),
+                        int(np.clip(LeyeY, ly_min, ly_max)),
+                        int(np.clip(180 - Rblink_raw, rb_min, rb_max)),
+                        int(np.clip(Lblink_raw, lb_min, lb_max)),
+                        int(np.clip(Rebrow_raw, reb_min, reb_max)),
+                        int(np.clip(180 - Lebrow_raw, leb_min, leb_max)),
+                        int(np.clip(M1_raw, m1_min, m1_max)),
+                        int(np.clip(180 - M1_raw, m2_min, m2_max)),
+                        int(np.clip(Nose_raw, nose_min, nose_max)),
+                    ]
+                    print(packet)
+                    pack_send(packet)
+
+                    # ---- Draw overlay ----
+                    for pt in coords.values():
+                        cv2.circle(frame, pt, 2, (0, 255, 0), -1)
+
+                    cv2.imshow("Eye Tracking", frame)
+
+                    delay = 3 if source_type == "video" else 1
+                    if cv2.waitKey(delay) & 0xFF == 27:
+                        break
+
+        except Exception as e:
+            print("Stream error:", e)
+
+        finally:
+            if cap:
+                cap.release()
+            cv2.destroyAllWindows()
+            stream_running = False
+            print("Stream stopped")
 
     Thread(target=run, daemon=True).start()
+
 
 # ---------------------------
 # Tkinter GUI
 # ---------------------------
+from tkinter import filedialog
+from pathlib import Path
 
-root = tk.Tk()
+root = tk.Tk() 
 root.title("Eye Tracker Stabilized")
 
-start_btn = tk.Button(root, text="Start Tracking", font=("Arial",14),
-                      command=start_stream)
-start_btn.pack(padx=20,pady=20)
+def start_webcam():
+    start_stream(source_type="webcam")
+
+
+def start_video():
+    path = filedialog.askopenfilename(
+        title="Select video file",
+        filetypes=[("Video files", "*.mp4 *.avi *.mov")]
+    )
+
+    if not path:
+        return
+
+    # Convert to absolute path and use forward slashes
+    video_path = str(Path(path).resolve()).replace("\\", "/")
+    print("Normalized path:", video_path)
+
+    # Try opening it manually first to catch errors
+    cap_test = cv2.VideoCapture(video_path, cv2.CAP_ANY)
+    if not cap_test.isOpened():
+        print("Stream error: Could not open video source")
+        return
+    cap_test.release()
+
+    # Now start the stream with the safe path
+    start_stream(source_type="video", video_path=video_path)
+
+
+start_btn = tk.Button(root, text="📷 Start Webcam", font=("Arial",14),
+                      command=start_webcam)
+start_btn.pack(padx=20,pady=10)
+
+video_btn = tk.Button(root, text="🎥 Load Video", font=("Arial",14),
+                      command=start_video)
+video_btn.pack(padx=20,pady=10)
 
 root.mainloop()
-
-    
